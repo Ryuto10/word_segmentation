@@ -26,13 +26,14 @@ def create_arg_parser():
     return parser
 
 
-def test(test_data, model, char2index, args):
+def test(test_iter, model, char2index, args):
         if args.eval:
             # Evaluation
             print("## Evaluation: {}".format(args.eval))
             model.eval()
             total_corr1, total_corr2, total_corr3, total_n = 0, 0, 0, 0
-            for xs, ys in tqdm(test_data):
+            test_iter.create_batches()
+            for xs, ys in tqdm(test_iter):
                 score1, score2, score3 = model(xs)
                 correct1, correct2, correct3, total = evaluation(score1, score2, score3, ys)
                 total_corr1 += int(correct1)
@@ -51,8 +52,6 @@ def test(test_data, model, char2index, args):
                 in_text = input("> ")
                 if in_text == "q":
                     break
-                import ipdb;
-                ipdb.set_trace()
                 x = [char2index[c] if c in char2index else char2index["<UNK>"] for c in in_text]
                 x_len = torch.LongTensor([len(x)])
                 xs = torch.LongTensor([x])
@@ -77,11 +76,11 @@ def main():
     with open(path.join(args.dataset, "char2index.json")) as fi:
         char2index = json.load(fi)
 
-    test_data = []
+    test_iter = []
     if args.eval:
         with open(path.join(args.dataset, "{}.json".format(args.eval))) as fi:
             test_data = [json.loads(line) for line in fi]
-            test_data = MyBucketIterator(test_data, 128, False)
+            test_iter = MyBucketIterator(test_data, 128, False)
 
     model: nn.Module = None
     if args.model_path and path.exists(args.model_path):
@@ -90,7 +89,7 @@ def main():
     if torch.cuda.is_available():
         model = model.cuda()
 
-    test(test_data, model, char2index, args)
+    test(test_iter, model, char2index, args)
 
 
 if __name__ == '__main__':
