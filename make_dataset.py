@@ -1,137 +1,146 @@
-import re
+import argparse
 import glob
 import json
-import os.path
-import argparse
-import subprocess
-from tqdm import tqdm
 from collections import defaultdict
 from itertools import groupby, islice
+from os import path, mkdir
 
-DATASET = "/Users/ryuto/lab/research/predicate_argument/data/train-with-juman"
-BASENAMES = ["train", "dev", "test"]
+from tqdm import tqdm
 
-class Obj2idx:
+DATASET = ["train", "dev", "test"]
+
+
+class Char2idx:
     def __init__(self):
-        self.char2index = defaultdict(lambda: len(self.char2index))
-        self.UNK = self.char2index["UNK"]
-        self.counter = defaultdict(int)
+        self.vocab = defaultdict(lambda: len(self.vocab))
+        self.pad = self.vocab["<pad>"]
+        self.UNK = self.vocab["<UNK>"]
+        self.unk_counter = defaultdict(int)
+        self.train = True
 
-    def __call__(self, x, unk=False):
-        if unk and not x in self.char2index:
-            self.counter[x] += 1
+    def __call__(self, x):
+        if self.train is False and x not in self.vocab:
+            self.unk_counter[x] += 1
             return self.UNK
         else:
-            return self.char2index[x]
+            return self.vocab[x]
 
-    def show(self):
-        print("Number of char : {}".format(len(self.char2index)))
-        print("Number of UNK : {}".format(len(self.counter)))
+    def display_vocab(self):
+        print("# Number of char : {}".format(len(self.vocab)))
+        print("# Number of UNK : {}".format(len(self.unk_counter)))
 
     def make_log(self, args, file):
         fo = open(file, "w")
-        print("args :", file=fo)
+        print("# Args :", file=fo)
         for k, v in args.__dict__.items():
             print("\t{} : {}".format(k, v), file=fo)
-        print("Number of char : {}".format(len(self.char2index)), file=fo)
-        print("Number of UNK : {}".format(len(self.counter)), file=fo)
-        print("UNK char :", file=fo)
-        for k, v in self.counter.items():
+        print("# Number of char : {}".format(len(self.vocab)), file=fo)
+        print("# Number of UNK : {}".format(len(self.unk_counter)), file=fo)
+        print("# UNK char :", file=fo)
+        for k, v in self.unk_counter.items():
             print("\t{} : {}".format(k, v), file=fo)
         fo.close()
 
+
 class Doc:
     def __init__(self, file):
-        self.sents = []
-        with open(file) as f:
-            for val, group in groupby(f, key=lambda x: x.startswith("EOS")):
-                if not val:
-                    self.sents.append(Sent(group))
+        with open(file) as fi:
+            self.sents = [Sent(chunk) for v, chunk in groupby(fi, key=lambda x: x.startswith("EOS")) if not v]
+
 
 class Sent:
     def __init__(self, chunk):
-        self.sections = []
-        for val, group in groupby(chunk, key=lambda x: x.startswith("*")):
-            if not val:
-                self.sections.append(Section(group))
+        self.sections = [Section(lines) for v, lines in groupby(chunk, key=lambda x: x.startswith("*")) if not v]
 
-    def get_xy(self):
-        for section in self.sections:
-            for word in section.words:
-                for x, y in zip(word.xs, word.ys):
-                    yield x, y
 
 class Section:
-    def __init__(self, chunk):
-        self.words = []
-        for idx, line in enumerate(chunk):
-            self.words.append(Word(idx, line))
+    def __init__(self, lines):
+        self.words = [Word(line) for line in lines]
+
 
 class Word:
-    """
-    x = (char)
-    y = (word, section, pred)
-    """
-    def __init__(self, idx, line):
-        self.xs = [x for x in line.split()[0]]
-        self.ys = [y for y in self.iter_y(idx, line)]
+    def __init__(self, line):
+        self.word = line.split("\t", 1)[0]
+        self.is_pred = self.is_predicate(line)
 
-    def iter_y(self, idx, line):
-        word = line.split()[0]
-        word_f = [0 for _ in range(len(word))]
-        word_f[0] = 1
-        section_f = [0 for _ in range(len(word))]
-        if idx == 0:
-            section_f[0] = 1
-        if self.is_predicate(line):
-            prd_f = [1 for _ in range(len(word))]
-        else:
-            prd_f = [0 for _ in range(len(word))]
-        for y in zip(word_f, section_f, prd_f):
-            yield y
-
-    def is_predicate(self, line):
+    @staticmethod
+    def is_predicate(line):
         if 'type="pred"' in line:
-            return True
+            return 1
         else:
-            return False
+            return 0
+
+
+def create_instance(sent: Sent, char2idx: Char2idx) -> [[str, ...], [(int, int, int), ...]]:
+    """
+    Returns:
+        xs: Sequence of character.
+        ys: y[0] = Binary representing whether the word starts
+            y[1] = Binary representing whether it is a predicate
+            y[2] = Binary representing whether the phrase begins
+    """
+    xs = []
+    ys = []
+    for section in sent.sections:
+        for idx_word, word in enumerate(section.words):
+            for idx_char, c in enumerate(word.word):
+                if word.is_pred and is_start(idx_char):
+                    is_pred = 1
+                else:
+                    is_pred = 0
+
+                if is_start(idx_word) and is_start(idx_char):
+                    is_start_section = 1
+                else:
+                    is_start_section = 0
+
+                xs.append(char2idx(c))
+                ys.append((is_start(idx_char), is_pred, is_start_section))
+
+    return [xs, ys]
+
+
+def is_start(idx: int):
+    if idx == 0:
+        return 1
+    else:
+        return 0
+
 
 def main(args):
-    if not os.path.exists(args.out_dir):
-        subprocess.check_output( "mkdir {}".format(args.out_dir), shell=True )
-        print('# create "{}"'.format(args.out_dir))
+    if not path.exists(args.out_dir):
+        mkdir(args.out_dir)
+        print('# make directory: "{}"'.format(args.out_dir))
 
-    obj2idx = Obj2idx()
-    for basename in BASENAMES:
-        if basename == "train":
-            unk = False
+    char2idx = Char2idx()
+
+    for base_name in DATASET:
+        if base_name == "train":
+            char2idx.train = True
         else:
-            unk = True
-        files = sorted(glob.glob(os.path.join(args.in_dir, basename, '*')))
-        n_files = int(len(files) * args.ratio * 0.1)
-        print("# {} {}%".format(basename, args.ratio * 10))
+            char2idx.train = False
 
-        data = []
-        for file in tqdm(islice(files, n_files)):
-            doc = Doc(file)
-            for sent in doc.sents:
-                xs, ys = [], []
-                for x, y in sent.get_xy():
-                    xs.append(obj2idx(x, unk))
-                    ys.append(y)
-                data.append((xs, ys))
+        in_files = sorted(glob.glob(path.join(args.in_dir, base_name, '*')))
+        n_files = int(len(in_files) * args.ratio)
+        print("# {} {}%".format(base_name, args.ratio * 100))
 
-        with open(os.path.join(args.out_dir, basename + ".json"), "w") as fo:
-            json.dump(data, fo)
+        # write
+        with open(path.join(args.out_dir, base_name + ".json"), "w") as fo:
+            for file in tqdm(islice(in_files, n_files)):
+                doc = Doc(file)
+                for sent in doc.sents:
+                    pair = json.dumps(create_instance(sent, char2idx))
+                    print(pair, file=fo)
 
-    obj2idx.show()
-    obj2idx.make_log(args, os.path.join(args.out_dir, "data_log.txt"))
-    with open(os.path.join(args.out_dir, "char2index.json"), "w") as fo:
-        json.dump(obj2idx.char2index, fo)
+    char2idx.display_vocab()
+    char2idx.make_log(args, path.join(args.out_dir, "data_log.txt"))
+    with open(path.join(args.out_dir, "char2index.json"), "w") as fo:
+        json.dump(char2idx.vocab, fo)
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='makedata')
-    parser.add_argument('--in_dir', '-i', default=DATASET)
-    parser.add_argument('--out_dir', '-o', default="./work")
-    parser.add_argument('--ratio', '-r', type=int, default=10)
+    parser = argparse.ArgumentParser(description='make dataset')
+    parser.add_argument('--in_dir', '-i', type=path.abspath)
+    parser.add_argument('--out_dir', '-o', type=path.abspath, default="./work")
+    parser.add_argument('--ratio', '-r', type=float, default=1)
     main(parser.parse_args())

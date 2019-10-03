@@ -1,10 +1,10 @@
-args :
-	in_dir : /Users/ryuto/lab/research/predicate_argument/data/train-with-juman
-	out_dir : ./work
-	ratio : 10
-Number of char : 2695
-Number of UNK : 217
-UNK char :
+# Args :
+	in_dir : /Users/ryuto/lab/research/data/raw/train-with-juman
+	out_dir : /Users/ryuto/private/py/neural/word_segmentation/work
+	ratio : 1
+# Number of char : 2695
+# Number of UNK : 217
+# UNK char :
 	允 : 2
 	胡 : 1
 	皓 : 1
