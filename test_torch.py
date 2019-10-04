@@ -4,11 +4,12 @@ from os import path, mkdir
 
 import torch
 import torch.nn as nn
+from scipy.stats.mstats import gmean
 from tqdm import tqdm
 
+from check_dataset import get_visible_sent
 from iterators import MyBucketIterator
 from models import evaluation
-from check_dataset import get_visible_sent
 
 
 def create_arg_parser():
@@ -29,22 +30,19 @@ def create_arg_parser():
 def test(test_iter, model, char2index, args):
         if args.eval:
             # Evaluation
-            print("## Evaluation: {}".format(args.eval))
+            print("## Validation")
             model.eval()
-            total_corr1, total_corr2, total_corr3, total_n = 0, 0, 0, 0
             test_iter.create_batches()
+            total_corr = torch.DoubleTensor([0, 0, 0])
+            total_n = 0
             for xs, ys in tqdm(test_iter):
-                score1, score2, score3 = model(xs)
-                correct1, correct2, correct3, total = evaluation(score1, score2, score3, ys)
-                total_corr1 += int(correct1)
-                total_corr2 += int(correct2)
-                total_corr3 += int(correct3)
+                scores = model(xs)
+                corrects, total = evaluation(scores, ys)
+                total_corr += corrects
                 total_n += int(total)
-            acc1 = total_corr1 / total_n
-            acc2 = total_corr2 / total_n
-            acc3 = total_corr3 / total_n
-            score = acc1 * acc2 * acc3
-            print("### 単語ACC： {}, 述語ACC： {}, 文節ACC: {}, score: {}".format(acc1, acc2, acc3, score))
+            accuracy = (total_corr / total_n).tolist()
+            eval_score = gmean(accuracy)
+            print("### 単語ACC： {:.3f}, 述語ACC： {:.3f}, 文節ACC: {:.3f}, score: {:.3f}".format(*accuracy, eval_score))
 
         if args.interactive:
             index2char = {idx: c for c, idx in char2index.items()}

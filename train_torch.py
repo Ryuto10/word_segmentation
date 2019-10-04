@@ -4,6 +4,7 @@ from os import path, mkdir
 
 import torch
 import torch.nn as nn
+from scipy.stats.mstats import gmean
 from tqdm import tqdm
 
 from iterators import MyBucketIterator
@@ -34,7 +35,7 @@ def create_arg_parser():
     return parser
 
 
-def train(train_iter, dev_iter, model, args):
+def train(train_iter, test_iter, model, args):
     early_stopping_count = 0
     best_score = 0
     loss_function = nn.CrossEntropyLoss()
@@ -61,15 +62,12 @@ def train(train_iter, dev_iter, model, args):
                 ys = [y.cuda() for y in ys]
 
             # 学習
-            score1, score2, score3 = model(xs)
-            loss1, loss2, loss3 = 0, 0, 0
+            scores = model(xs)
+            loss = 0
             for idx, y in enumerate(ys):
-                loss1 += loss_function(score1[idx], y[:, 0])
-                loss2 += loss_function(score2[idx], y[:, 1])
-                loss3 += loss_function(score3[idx], y[:, 2])
-            loss = loss1 + loss2 + loss3
-            total_loss += loss
+                loss += loss_function(scores[idx].transpose(1, 2), y)
             loss.backward()
+            total_loss += loss
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
         print("### Loss: {}".format(float(total_loss)))
@@ -77,24 +75,21 @@ def train(train_iter, dev_iter, model, args):
         # Evaluation
         print("## Validation")
         model.eval()
-        dev_iter.create_batches()
-        total_corr1, total_corr2, total_corr3, total_n = 0, 0, 0, 0
-        for xs, ys in tqdm(dev_iter):
-            score1, score2, score3 = model(xs)
-            correct1, correct2, correct3, total = evaluation(score1, score2, score3, ys)
-            total_corr1 += int(correct1)
-            total_corr2 += int(correct2)
-            total_corr3 += int(correct3)
+        test_iter.create_batches()
+        total_corr = torch.DoubleTensor([0, 0, 0])
+        total_n = 0
+        for xs, ys in tqdm(test_iter):
+            scores = model(xs)
+            corrects, total = evaluation(scores, ys)
+            total_corr += corrects
             total_n += int(total)
-        acc1 = total_corr1 / total_n
-        acc2 = total_corr2 / total_n
-        acc3 = total_corr3 / total_n
-        score = acc1 * acc2 * acc3
-        print("### 単語ACC： {}, 述語ACC： {}, 文節ACC: {}, score: {}".format(acc1, acc2, acc3, score))
+        accuracy = (total_corr / total_n).tolist()
+        eval_score = gmean(accuracy)
+        print("### 単語ACC： {:.3f}, 述語ACC： {:.3f}, 文節ACC: {:.3f}, score: {:.3f}".format(*accuracy, eval_score))
 
         # Save best model
-        if score > best_score:
-            best_score = score
+        if eval_score > best_score:
+            best_score = eval_score
             early_stopping_count = 0
             torch.save(model, path.join(args.out_dir, "best.model"))
         else:

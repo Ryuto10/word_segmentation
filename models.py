@@ -41,39 +41,26 @@ class Model(nn.Module):
         # outs: torch.Tensor (shape = (batch, max sentence, 6)
         outs = self.linear(out_lstm)
 
-        # score: [torch.Tensor, ...], length = batch size, each tensor shape = (sentence, 2)
-        score1 = [self.extract_score(out, int(x_len), 0) for out, x_len in zip(outs, xs_len)]
-        score2 = [self.extract_score(out, int(x_len), 1) for out, x_len in zip(outs, xs_len)]
-        score3 = [self.extract_score(out, int(x_len), 2) for out, x_len in zip(outs, xs_len)]
+        # score: [torch.Tensor, ...], length = batch size, each tensor shape = (sentence, 3, 2)
+        scores = [out[:int(x_len)].reshape(-1, 3, 2) for out, x_len in zip(outs, xs_len)]
 
-        return score1, score2, score3
-
-    @staticmethod
-    def extract_score(out, x_len: int, kind: int):
-        return out[:x_len, kind * 2:(kind + 1) * 2]
+        return scores
 
 
-def evaluation(score1, score2, score3, ys):
+def evaluation(scores, ys):
     """
     Args:
-        score1: [torch.Tensor (shape = (sentence, 2)), ...], length = batch
-        score2: [torch.Tensor (shape = (sentence, 2)), , ...], length = batch
-        score3: [torch.Tensor (shape = (sentence, 2)), , ...], length = batch
+        scores: [torch.Tensor (shape = (sentence, 3, 2)), ...], length = batch
         ys: [torch.Tensor (shape = (sentence, 3)), , ...], length = batch
     Returns:
         accuracy1: The accuracy of whether the word starts
         accuracy2: The accuracy of whether it is a predicate
         accuracy3: The accuracy of whether the phrase begins
     """
-    # shape = (batch * sentence, 2 or 3)
-    cat_ys = torch.cat(ys, dim=0)
-    cat_score1 = torch.cat(score1, dim=0).cpu()
-    cat_score2 = torch.cat(score2, dim=0).cpu()
-    cat_score3 = torch.cat(score3, dim=0).cpu()
-
-    correct1 = sum(torch.argmax(cat_score1, dim=1) == cat_ys[:, 0])
-    correct2 = sum(torch.argmax(cat_score2, dim=1) == cat_ys[:, 0])
-    correct3 = sum(torch.argmax(cat_score3, dim=1) == cat_ys[:, 0])
+    cat_ys = torch.cat(ys, dim=0)  # shape = (batch * sentence, 3)
+    cat_scores = torch.cat(scores, dim=0).cpu()  # shape = (batch * sentence, 3, 2)
+    predicts = torch.argmax(cat_scores, dim=2)  # shape = (batch * sentence, 3)
+    corrects = torch.sum(predicts == cat_ys, dim=0).double()  # shape = 3
     total = cat_ys.size(0)
 
-    return correct1, correct2, correct3, total
+    return corrects, total
