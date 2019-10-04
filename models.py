@@ -4,6 +4,7 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
 class Model(nn.Module):
+    """This model infers word breaks, predicate identification, and phrase breaks for input sentences."""
     def __init__(self, n_vocab: int, embed_dim: int, hidden_dim: int, out_dim: int, n_layers: int, dropout: float):
         super(Model, self).__init__()
         # hyper parameter
@@ -20,9 +21,16 @@ class Model(nn.Module):
                             batch_first=True, dropout=self.dropout, bidirectional=True)
         self.linear = nn.Linear(self.hidden_dim * 2, self.out_dim)
 
-    def forward(self, xs: (torch.Tensor, torch.Tensor)):
-        # padded_xs: torch.Tensor (shape = (batch, max sentence))
-        # xs_len: torch.Tensor (shape = batch)
+    def forward(self, xs: (torch.Tensor, torch.Tensor)) -> [torch.Tensor, ...]:
+        """
+        Args:
+            xs: Tuple of (padded_xs, xs_len)
+                padded_xs: torch.Tensor, shape = (batch, max sentence)
+                xs_len: torch.Tensor, shape = batch
+        Return:
+            scores: [score, ...], length = batch size
+                score: torch.Tensor, shape = (sentence, 3, 2)
+        """
         padded_xs, xs_len = xs
 
         # GPUへ転送
@@ -41,7 +49,6 @@ class Model(nn.Module):
         # outs: torch.Tensor (shape = (batch, max sentence, 6)
         outs = self.linear(out_lstm)
 
-        # score: [torch.Tensor, ...], length = batch size, each tensor shape = (sentence, 3, 2)
         scores = [out[:int(x_len)].reshape(-1, 3, 2) for out, x_len in zip(outs, xs_len)]
 
         return scores

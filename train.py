@@ -4,18 +4,18 @@ from os import path, mkdir
 
 import torch
 import torch.nn as nn
-from scipy.stats.mstats import gmean
 from tqdm import tqdm
 
 from iterators import MyBucketIterator
-from models import Model, evaluation
+from models import Model
+from test import evaluate
 
 
 def create_arg_parser():
     parser = argparse.ArgumentParser(description='Train')
     parser.add_argument('--dataset', type=path.abspath,
-                        help="Directory which contains dataset")
-    parser.add_argument('--out_dir', default='result')
+                        help="Directory containing the dataset")
+    parser.add_argument('--out_dir', default='out')
     parser.add_argument('--model', type=path.abspath, dest='model_path', default=None)
 
     # training option
@@ -35,14 +35,16 @@ def create_arg_parser():
     return parser
 
 
-def train(train_iter, test_iter, model, args):
-    early_stopping_count = 0
-    best_score = 0
+def train(train_iter, dev_iter, model, args):
+    # loss function
     loss_function = nn.CrossEntropyLoss()
 
+    # optimizer
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
                                  lr=args.learning_rate,
                                  weight_decay=0.0001)
+    early_stopping_count = 0
+    best_score = 0
 
     for epoch in range(1, args.epoch + 1):
         print("# {} epoch".format(epoch))
@@ -50,8 +52,10 @@ def train(train_iter, test_iter, model, args):
         # Train
         print('## Train')
         model.train()
-        total_loss = 0
         train_iter.create_batches()
+
+        total_loss = 0
+
         for xs, ys in tqdm(train_iter):
             # 勾配の初期化
             optimizer.zero_grad()
@@ -70,22 +74,13 @@ def train(train_iter, test_iter, model, args):
             total_loss += loss
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+
         print("### Loss: {}".format(float(total_loss)))
 
         # Evaluation
-        print("## Validation")
-        model.eval()
-        test_iter.create_batches()
-        total_corr = torch.DoubleTensor([0, 0, 0])
-        total_n = 0
-        for xs, ys in tqdm(test_iter):
-            scores = model(xs)
-            corrects, total = evaluation(scores, ys)
-            total_corr += corrects
-            total_n += int(total)
-        accuracy = (total_corr / total_n).tolist()
-        eval_score = gmean(accuracy)
-        print("### 単語ACC： {:.3f}, 述語ACC： {:.3f}, 文節ACC: {:.3f}, score: {:.3f}".format(*accuracy, eval_score))
+        print('## Validation')
+        accuracy, eval_score = evaluate(model, dev_iter)
+        print("### 単語ACC： {:.3f}, 述語ACC： {:.3f}, 文節ACC: {:.3f}, score: {}".format(*accuracy, eval_score))
 
         # Save best model
         if eval_score > best_score:
